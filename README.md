@@ -1,5 +1,9 @@
 # DynamisHelper (Ashita v4)
 
+Original Authors: Krizz - Ported by Bloodlust
+
+Dynamis Helper
+
 An optimized Dynamis tracking add-on for Ashita ported from Windower and improved , specifically tailored for the CatsEyeXI private server. It tracks obtained currency, displays the current stagger proc for your target, and provides visual ImGui overlays.
 
 ## Features
