@@ -2,12 +2,12 @@
     DynamisHelper - Ashita v4 Port
     Original Author: Krizz, maintainer: Skyrant
     Ported to Ashita v4 with ImGui Settings Menu.
-    NM Fix: Prioritizes static job procs for NMs, only rotates Nightmare mobs.
+    Optimized for CatsEyeXI: Separated Normal vs Dreamlands logic & NM safe.
 ]]--
 
 addon.name      = 'DynamisHelper'
 addon.author    = 'Krizz / Skyrant'
-addon.version   = '1.0.8'
+addon.version   = '1.1.1'
 addon.desc      = 'Tracks Dynamis currency, procs, and staggers.'
 addon.link      = 'N/A'
 
@@ -73,7 +73,7 @@ local dynamis_zones = {
 local stagger_count = 0
 local current_proc = "Unknown"
 local current_mob = ""
-local is_dynamis = false
+local current_zone_type = "None"
 
 -- ImGui UI Tracking Arrays
 local ui = {
@@ -82,7 +82,7 @@ local ui = {
     proc_open    = { true }
 }
 
--- Configuration Setup & Registration
+-- Configuration Setup & Registration (Hardened against nil values)
 local default_settings = {
     timer = false,
     tracker = false,
@@ -97,16 +97,38 @@ settings.register('settings', 'settings_update', function(s)
     end
 end)
 
-config = settings.load(default_settings)
+-- Safe load: If the file is broken or empty, it forces default_settings
+local loaded_settings = settings.load(default_settings)
+if loaded_settings ~= nil then
+    config = loaded_settings
+end
 
 ---------------------------------------------------------------------------------------------------
 -- Functions
 ---------------------------------------------------------------------------------------------------
+
+-- Calculates exact Vana'diel Time mathematically using the Earth epoch, bypassing memory pointers
+local function GetVanaTimeMinutes()
+    local vana_epoch = 1009810800 -- Jan 1, 2002 00:00:00 JST in Unix Time
+    local earth_seconds = os.time() - vana_epoch
+    local vana_seconds = earth_seconds * 25
+    local vana_minutes = math.floor(vana_seconds / 60)
+    return vana_minutes % 1440 -- Returns the exact minute of the current Vana'diel day (0-1439)
+end
+
 local function check_zone()
     local party = AshitaCore:GetMemoryManager():GetParty()
     if party then
         local zone = party:GetMemberZone(0)
-        is_dynamis = dynamis_zones[zone] or false
+        if dynamis_zones[zone] then
+            if zone >= 39 and zone <= 42 then
+                current_zone_type = "Dreamlands"
+            else
+                current_zone_type = "Normal"
+            end
+        else
+            current_zone_type = "None"
+        end
     end
 end
 
@@ -121,6 +143,7 @@ end
 ---------------------------------------------------------------------------------------------------
 ashita.events.register('command', 'command_cb', function(e)
     local args = e.command:args()
+    -- Safely bypass if it's not our command
     if args[1] ~= '/dhelper' and args[1] ~= '/dynamishelper' then
         return
     end
@@ -187,24 +210,24 @@ end)
 -- Rendering & Polling
 ---------------------------------------------------------------------------------------------------
 ashita.events.register('d3d_present', 'd3d_present_cb', function()
-    -- Render Configuration Menu
+    -- Render Configuration Menu (This can be opened anywhere)
     if ui.config_open[1] then
-        imgui.SetNextWindowSize({ 260, 170 }, ImGuiCond_FirstUseEver)
-        if imgui.Begin('DynamisHelper Settings', ui.config_open, ImGuiWindowFlags_AlwaysAutoResize) then
+        imgui.SetNextWindowSize({ 270, 170 })
+        if imgui.Begin('DynamisHelper Settings', ui.config_open) then
             
-            local timer_state = { config.timer }
+            local timer_state = { config.timer or false }
             if imgui.Checkbox('Enable Stagger Timer Echo', timer_state) then
                 config.timer = timer_state[1]
                 settings.save()
             end
 
-            local tracker_state = { config.tracker }
+            local tracker_state = { config.tracker or false }
             if imgui.Checkbox('Enable Currency Tracker Window', tracker_state) then
                 config.tracker = tracker_state[1]
                 settings.save()
             end
 
-            local proc_state = { config.proc }
+            local proc_state = { config.proc or false }
             if imgui.Checkbox('Enable Target Proc Window', proc_state) then
                 config.proc = proc_state[1]
                 settings.save()
@@ -222,7 +245,7 @@ ashita.events.register('d3d_present', 'd3d_present_cb', function()
 
     -- Stop rendering the rest of the UI if we aren't in Dynamis
     check_zone()
-    if not is_dynamis then return end
+    if current_zone_type == "None" then return end
 
     -- Poll Target & Calculate Proc Window
     if config.proc then
@@ -253,9 +276,9 @@ ashita.events.register('d3d_present', 'd3d_present_cb', function()
                     end
                 end
 
-                -- Step 2: If not found, and it is a Nightmare family mob, calculate time of day
+                -- Step 2: If not found, and it is a Nightmare family mob, calculate mathematically
                 if current_proc == "Unknown" and current_mob:match("^Nightmare ") then
-                    local vTime = AshitaCore:GetMemoryManager():GetTime():GetTime()
+                    local vTime = GetVanaTimeMinutes()
                     local window = 'morning'
                     
                     if vTime >= 0 and vTime < 480 then window = 'morning'
@@ -284,7 +307,7 @@ ashita.events.register('d3d_present', 'd3d_present_cb', function()
 
     -- Render Tracker Window
     if config.tracker and ui.tracker_open[1] then
-        imgui.SetNextWindowSize({ 200, 150 }, ImGuiCond_FirstUseEver)
+        imgui.SetNextWindowSize({ 200, 150 })
         if imgui.Begin('Dynamis Currency', ui.tracker_open) then
             local total_drops = 0
             for k, v in pairs(Currency) do
@@ -302,7 +325,7 @@ ashita.events.register('d3d_present', 'd3d_present_cb', function()
 
     -- Render Proc Window
     if config.proc and current_mob ~= "" and ui.proc_open[1] then
-        imgui.SetNextWindowSize({ 220, 80 }, ImGuiCond_FirstUseEver)
+        imgui.SetNextWindowSize({ 220, 80 })
         if imgui.Begin('Dynamis Proc', ui.proc_open) then
             imgui.Text("Target: " .. current_mob)
             imgui.Text("Proc: " .. current_proc)
